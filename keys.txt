@@ -1,0 +1,11 @@
+{
+"apiKey": "",
+"secretKey": "",
+"marketplace":"hitbtc2",
+"markets":["EOS/ETH"],
+"currency":"ETH",
+"percent":0.01,
+"markup":0.001,
+"fee":0,
+"order_time":0.5
+}

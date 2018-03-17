@@ -15,7 +15,7 @@ from datetime import datetime
 
 def init_exchange():
     # Подгружаем файл с настройками
-    with open('keys_my.txt', 'r', encoding='utf-8') as fl:
+    with open('keys.txt', 'r', encoding='utf-8') as fl:
         keys = json.load(fl)
     # Подключаемся к бирже
     # Если в списке нет указания конкретной биржи, то коннектимя к HitBTC
@@ -56,7 +56,7 @@ def init_exchange():
         #balance = get_positive_accounts(exchange.fetch_balance(str(keys['currency']))['total'])
         #time.sleep(100)
         #CAN_SPEND = float(keys['percent']) * balance  # Сколько  готовы вложить в бай % от трейдингового баланса
-        CAN_SPEND = 0.0001
+        CAN_SPEND = 0.001
         MARKUP = float(keys['markup'])  # 0.001 = 0.1% желаемый процент прибыли со сделки
         STOCK_FEE = float(keys['fee'])  # Какую комиссию берет биржа
         ORDER_LIFE_TIME = float(keys['order_time'])  # Время для отмены неисполненного ордера на покупку 0.5 = 30 сек.
@@ -182,7 +182,7 @@ def create_buy(market):
     log(market, 'Получаем текущие курсы')
     # Берем цену лучшего аска
     current_rate = float(exchange.fetch_ticker(market)['ask'])
-    print(current_rate)
+    print(exchange.fetch_ticker(market))
     print(CAN_SPEND / current_rate)
     can_buy = CAN_SPEND / current_rate
     pair = market.split('/')
@@ -195,9 +195,12 @@ def create_buy(market):
         )
     # Создание пробного ордера по заниженной цене
     #current_rate /= 10
+
     print(current_rate)
+    #time.sleep(10)
     order_res = exchange.create_order(market, 'limit', 'buy', can_buy, current_rate)
     # Заполняем БД при успешном создании оредера
+    print(order_res)
     if order_res:
         cursor.execute(
             """
@@ -241,8 +244,12 @@ def create_sell(from_order, market):
     buy_order_q = """
         SELECT order_spent, order_amount FROM orders WHERE order_id='%s'
     """ % from_order
-    cursor.execute(buy_order_q)
-    order_spent, order_amount = cursor.fetchone()
+
+    order_amount = exchange.fetch_order(from_order)['amount']
+    order_spent = exchange.fetch_order(from_order)['price']*order_amount
+
+    print(order_spent)
+    print(order_amount)
     new_rate = (order_spent + order_spent * MARKUP) / order_amount
     new_rate_fee = new_rate + (new_rate * STOCK_FEE) / (1 - STOCK_FEE)
     # Берем цену лучшего бида
@@ -265,6 +272,7 @@ def create_sell(from_order, market):
             choosen_rate,
         )
         )
+    #time.sleep(100)
     order_res = exchange.create_order(market, 'limit', 'sell', order_amount, choosen_rate)
     # Заполняем БД по созданному ордеру
     if order_res:

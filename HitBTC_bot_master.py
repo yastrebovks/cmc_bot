@@ -15,7 +15,7 @@ from datetime import datetime
 
 def init_exchange():
     # Подгружаем файл с настройками
-    with open('keys.txt', 'r', encoding='utf-8') as fl:
+    with open('keys_my.txt', 'r', encoding='utf-8') as fl:
         keys = json.load(fl)
     # Подключаемся к бирже
     # Если в списке нет указания конкретной биржи, то коннектимя к HitBTC
@@ -33,11 +33,7 @@ def init_exchange():
             print("Ошибка подключения к бирже1")
     else:
         try:
-            exchange = eval('ccxt.%s()' % (keys['marketplace']))
-            #exchange = ccxt.hitbtc2({'apikey':keys['apiKey'], 'secret':keys['secretKey']})
-            exchange.secret = keys['secretKey']
-            exchange.apiKey = keys['apiKey']
-            #pprint('ccxt.%s({\'apikey\': %s, \'secret\': %s})' % (keys['marketplace'], keys['apiKey'], keys['secretKey']))
+            exchange = eval('ccxt.%s({\'apiKey\':\"%s\",\'secret\':\"%s\"})' % (keys['marketplace'], keys['apiKey'], keys['secretKey']))
         except Exception as e:
             print("Ошибка подключения к бирже2")
     # Пробуем выгрузить необходимые параметры
@@ -51,12 +47,9 @@ def init_exchange():
 
         # Запрашиваем баланс для трейдинга в валюте currency (например, ETH)
         balance = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free']
-        pprint(balance)
-        #balance = get_positive_accounts(exchange.fetch_balance(str(keys['currency']))['total'])
         CAN_SPEND = float(keys['percent']) * balance  # Сколько  готовы вложить в бай % от трейдингового баланса
         #CAN_SPEND = 0.001
         print(MARKETS)
-        #time.sleep(100)
         MARKUP = float(keys['markup'])  # 0.001 = 0.1% желаемый процент прибыли со сделки
         STOCK_FEE = float(keys['fee'])  # Какую комиссию берет биржа
         ORDER_LIFE_TIME = float(keys['order_time'])  # Время для отмены неисполненного ордера на покупку 0.5 = 30 сек.
@@ -65,7 +58,6 @@ def init_exchange():
                 Комиссия: %0.8f, желаемая прибыль: %0.8f, торговый баланс: %0.8f %s
                 """ % (CAN_SPEND, keys['currency'], keys['fee'], keys['markup'], CAN_SPEND, keys['currency'])
                )
-        #time.sleep(100)
     except Exception as e:
         print("Ошибка подключения к бирже1")
     return exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME

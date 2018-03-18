@@ -24,10 +24,11 @@ def init_exchange():
             exchange = ccxt.hitbtc2({
                 "apiKey": keys['apiKey'],
                 "secret": keys['secretKey'],
-                # "enableRateLimit": True,
-                # "verbose": True,
-                # "password": password,
+                #"enableRateLimit": True,
+                #"verbose": True,
+                #"password": password,
             })
+
         except Exception as e:
             print("Ошибка подключения к бирже1")
     else:
@@ -44,19 +45,18 @@ def init_exchange():
 
         # Список торгуемых пар
 
-        #MARKETS = keys['markets']
+        MARKETS = keys['markets']
 
-        MARKETS = [
-           'EOS/ETH'
-         ]
+        #MARKETS = ['EOS/ETH']
 
         # Запрашиваем баланс для трейдинга в валюте currency (например, ETH)
-        #pprint(exchange.fetch_balance(str('total')))
-
+        balance = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free']
+        pprint(balance)
         #balance = get_positive_accounts(exchange.fetch_balance(str(keys['currency']))['total'])
+        CAN_SPEND = float(keys['percent']) * balance  # Сколько  готовы вложить в бай % от трейдингового баланса
+        #CAN_SPEND = 0.001
+        print(MARKETS)
         #time.sleep(100)
-        #CAN_SPEND = float(keys['percent']) * balance  # Сколько  готовы вложить в бай % от трейдингового баланса
-        CAN_SPEND = 0.001
         MARKUP = float(keys['markup'])  # 0.001 = 0.1% желаемый процент прибыли со сделки
         STOCK_FEE = float(keys['fee'])  # Какую комиссию берет биржа
         ORDER_LIFE_TIME = float(keys['order_time'])  # Время для отмены неисполненного ордера на покупку 0.5 = 30 сек.
@@ -72,7 +72,7 @@ def init_exchange():
 
 
 ### Анализатор сигналов ###
-USE_MACD = False  # True - оценивать тренд по MACD, False - покупать и продавать невзирая ни на что
+USE_MACD = True  # True - оценивать тренд по MACD, False - покупать и продавать невзирая ни на что
 
 BEAR_PERC = 70  # % что считаем поворотом при медведе
 
@@ -131,18 +131,18 @@ def log(*args):
 def get_ticks(market):
     chart_data = {}
     # Получаем данные свечей
-    res = exchange.fetch_ohlcv(market, '3m')
+    res = exchange.fetch_ohlcv(market, '1m')
     print("OHLCV")
-    print(res)
+    #print(res)
     # Заполнение массива для дальнейшего анализа
     for item in res:
         dt_obj = (datetime.fromtimestamp(item[0] / 1000))
-        print(item)
+        #print(item)
         ts = int(time.mktime(dt_obj.timetuple()))
         if not ts in chart_data:
             chart_data[ts] = {'open': float(item[1]), 'close': float(item[4]), 'high': float(item[2]),
                               'low': float(item[3])}
-            print(chart_data[ts]['close'])
+            #print(chart_data[ts]['close'])
     print("Close from Get_ticks!")
     return chart_data
 

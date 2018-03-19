@@ -60,7 +60,7 @@ def init_exchange():
                )
     except Exception as e:
         print("Ошибка подключения к бирже1")
-    return exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME
+    return exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME, keys
 
 
 ### Анализатор сигналов ###
@@ -99,6 +99,13 @@ cursor.execute(orders_q)
 # Класс исключений
 class ScriptError(Exception):
     pass
+
+# Обновляем баланс
+def balance_refresh():
+    new_spend = CAN_SPEND
+    if len(get_positive_accounts(exchange.fetch_balance()['total'])) == 1:
+        new_spend = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free'] * float(keys['percent'])
+    return new_spend
 
 # Узнаем активные балансы аккаунта
 def get_positive_accounts(balance):
@@ -174,11 +181,10 @@ def create_buy(market):
     log(market, 'Получаем текущие курсы')
     # Берем цену лучшего аска
     current_rate = float(exchange.fetch_ticker(market)['ask'])
-    print(exchange.fetch_ticker(market))
-    print(CAN_SPEND / current_rate)
+    # Проверяем возможность реинвестирования процентов
+    CAN_SPEND = balance_refresh()
     can_buy = CAN_SPEND / current_rate
     pair = market.split('/')
-    print(pair)
     log(market, """
         Текущая цена - %0.8f
         На сумму %0.8f %s можно купить %0.8f %s
@@ -301,7 +307,7 @@ def create_sell(from_order, market):
 
 # Инициализируем биржу
 
-exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME = init_exchange()
+exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME, keys = init_exchange()
 
 # Основная логика, бесконечный цикл
 

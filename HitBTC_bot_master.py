@@ -10,6 +10,22 @@ import os
 
 from datetime import datetime
 
+### Глобальные флаги и переменные ###
+PROFIT = 0
+REFRESH = True
+USE_LOG = False
+
+### Анализатор сигналов ###
+USE_MACD = True  # True - оценивать тренд по MACD, False - покупать и продавать невзирая ни на что
+
+BEAR_PERC = 70  # % что считаем поворотом при медведе
+
+BULL_PERC = 99.9  # % что считаем поворотом при быке
+
+# BEAR_PERC = 70  # % что считаем поворотом при медведе
+
+# BULL_PERC = 100  # Так он будет продавать по минималке, как только курс пойдет вверх
+#######
 
 # Функция инициализации биржи
 
@@ -19,6 +35,7 @@ def init_exchange():
         keys = json.load(fl)
     # Подключаемся к бирже
     # Если в списке нет указания конкретной биржи, то коннектимя к HitBTC
+
     if not 'marketplace' in keys:
         try:
             exchange = ccxt.hitbtc2({
@@ -44,11 +61,18 @@ def init_exchange():
         MARKETS = keys['markets']
 
         #MARKETS = ['EOS/ETH']
+        if 'tradeCount' in keys:
+            # Запрашиваем баланс для трейдинга в валюте currency (например, ETH)
+            balance = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free']
+            CAN_SPEND = keys['tradeCount']  # Сколько  готовы вложить в бай % от трейдингового баланса
+            REFRESH = False
+            if CAN_SPEND > balance:
+                raise IOError("Trading account less for this trade!")
+        else:
+            balance = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free']
+            CAN_SPEND = float(keys['percent']) * balance
+            REFRESH = True
 
-        # Запрашиваем баланс для трейдинга в валюте currency (например, ETH)
-        balance = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free']
-        CAN_SPEND = float(keys['percent']) * balance  # Сколько  готовы вложить в бай % от трейдингового баланса
-        #CAN_SPEND = 0.001
         print(MARKETS)
         MARKUP = float(keys['markup'])  # 0.001 = 0.1% желаемый процент прибыли со сделки
         STOCK_FEE = float(keys['fee'])  # Какую комиссию берет биржа
@@ -60,21 +84,9 @@ def init_exchange():
                )
     except Exception as e:
         print("Ошибка подключения к бирже1")
-    return exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME, keys
+    return exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME, keys, REFRESH
 
 
-### Анализатор сигналов ###
-USE_MACD = True  # True - оценивать тренд по MACD, False - покупать и продавать невзирая ни на что
-
-BEAR_PERC = 70  # % что считаем поворотом при медведе
-
-BULL_PERC = 98  # % что считаем поворотом при быке
-
-# BEAR_PERC = 70  # % что считаем поворотом при медведе
-
-# BULL_PERC = 100  # Так он будет продавать по минималке, как только курс пойдет вверх
-#######
-USE_LOG = False
 numpy.seterr(all='ignore')
 conn = sqlite3.connect('local.db')
 cursor = conn.cursor()
@@ -102,6 +114,8 @@ class ScriptError(Exception):
 
 # Обновляем баланс
 def balance_refresh():
+    if not REFRESH:
+        return CAN_SPEND
     new_spend = CAN_SPEND
     if len(get_positive_accounts(exchange.fetch_balance()['total'])) == 1:
         new_spend = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free'] * float(keys['percent'])
@@ -130,18 +144,44 @@ def log(*args):
 def get_ticks(market):
     chart_data = {}
     # Получаем данные свечей
-    res = exchange.fetch_ohlcv(market, '1m')
+    res = exchange.fetch_ohlcv(market, '5m')
     print("OHLCV")
     #print(res)
     # Заполнение массива для дальнейшего анализа
     for item in res:
         dt_obj = (datetime.fromtimestamp(item[0] / 1000))
+        #print(item[0])
         #print(item)
         ts = int(time.mktime(dt_obj.timetuple()))
         if not ts in chart_data:
             chart_data[ts] = {'open': float(item[1]), 'close': float(item[4]), 'high': float(item[2]),
                               'low': float(item[3])}
             #print(chart_data[ts]['close'])
+
+    res = exchange.fetch_trades(market)
+
+    for trade in res:
+        try:
+            dt_obj = datetime.strptime(trade['datetime'], '%Y-%m-%dT%H:%M:%S.%fZ')
+        except ValueError:
+            dt_obj = datetime.strptime(trade['datetime'], '%Y-%m-%dT%H:%M:%SZ')
+
+        ts = int((time.mktime(dt_obj.timetuple()) / 300)) * 300
+        # print(ts)
+        if not ts in chart_data:
+            chart_data[ts] = {'open': 0, 'close': 0, 'high': 0, 'low': 0}
+
+        chart_data[ts]['close'] = float(trade['price'])
+
+        if not chart_data[ts]['open']:
+            chart_data[ts]['open'] = float(trade['price'])
+
+        if not chart_data[ts]['high'] or chart_data[ts]['high'] < float(trade['price']):
+            chart_data[ts]['high'] = float(trade['price'])
+
+        if not chart_data[ts]['low'] or chart_data[ts]['low'] > float(trade['price']):
+            chart_data[ts]['low'] = float(trade['price'])
+
     print("Close from Get_ticks!")
     return chart_data
 
@@ -192,7 +232,7 @@ def create_buy(market):
         """ % (current_rate, CAN_SPEND, pair[1], can_buy, pair[0])
         )
     # Создание пробного ордера по заниженной цене
-    #current_rate /= 10
+    current_rate /= 10
 
     print(current_rate)
     #time.sleep(10)
@@ -307,7 +347,7 @@ def create_sell(from_order, market):
 
 # Инициализируем биржу
 
-exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME, keys = init_exchange()
+exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME, keys, REFRESH = init_exchange()
 
 # Основная логика, бесконечный цикл
 

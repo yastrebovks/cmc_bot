@@ -48,12 +48,12 @@ def init_exchange():
             })
 
         except Exception as e:
-            print("Ошибка подключения к бирже1")
+            print("Connection Error 1")
     else:
         try:
             exchange = eval('ccxt.%s({\'apiKey\':\"%s\",\'secret\':\"%s\"})' % (keys['marketplace'], keys['apiKey'], keys['secretKey']))
         except Exception as e:
-            print("Ошибка подключения к бирже2")
+            print("Connection Error 2")
     # Пробуем выгрузить необходимые параметры
     try:
 
@@ -67,8 +67,8 @@ def init_exchange():
             balance = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free']
             CAN_SPEND = keys['tradeCount']  # Сколько  готовы вложить в бай % от трейдингового баланса
             REFRESH = False
-            if CAN_SPEND > balance:
-                raise IOError("Trading account less for this trade!")
+            #if CAN_SPEND > balance:
+                #raise IOError("Trading account less for this trade!")
         else:
             balance = get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free']
             CAN_SPEND = float(keys['percent']) * balance
@@ -79,12 +79,12 @@ def init_exchange():
         STOCK_FEE = float(keys['fee'])  # Какую комиссию берет биржа
         ORDER_LIFE_TIME = float(keys['order_time'])  # Время для отмены неисполненного ордера на покупку 0.5 = 30 сек.
         pprint("""
-                Готовы тратить - %0.8f %s
-                Комиссия: %0.8f, желаемая прибыль: %0.8f, торговый баланс: %0.8f %s
+                Can Spend - %0.8f %s
+                Fee: %0.8f, Markup: %0.8f, Balance: %0.8f %s
                 """ % (CAN_SPEND, keys['currency'], keys['fee'], keys['markup'], CAN_SPEND, keys['currency'])
                )
     except Exception as e:
-        print("Ошибка подключения к бирже1")
+        print("Connection Error 3")
     return exchange, MARKETS, CAN_SPEND, MARKUP, STOCK_FEE, ORDER_LIFE_TIME, keys, REFRESH
 
 
@@ -218,13 +218,16 @@ def create_buy(market):
     can_buy = CAN_SPEND / current_rate
     pair = market.split('/')
     log(market, """
-        Текущая цена - %0.8f
-        На сумму %0.8f %s можно купить %0.8f %s
-        Создаю ордер на покупку
+        Current Rate - %0.8f
+        By sum %0.8f %s can buy %0.8f %s
+        Creating Order
         """ % (current_rate, CAN_SPEND, pair[1], can_buy, pair[0])
         )
+    #current_rate /= 10
     # Создание пробного ордера по заниженной цене
-    order_res = exchange.create_order(market, 'market', 'buy', can_buy, current_rate)
+    order_res = exchange.create_order(market, 'limit', 'buy', can_buy, current_rate)
+    if not('price' in order_res) or not('amount' in order_res):
+        order_res = exchange.fetch_order(order_res['id'])
     # Заполняем БД при успешном создании оредера
     print(order_res)
     if order_res:
@@ -248,17 +251,17 @@ def create_buy(market):
                 :order_spent
               )
             """, {
-                'order_id': order_res['info']['clientOrderId'],
+                'order_id': order_res['id'],
                 'order_pair': market,
                 'order_price': order_res['price'],
                 'order_amount': order_res['amount'],
                 'order_spent': CAN_SPEND
             })
         conn.commit()
-        log(order_res, " - Создан ордер на покупку")
+        log(order_res, " - Order Created!")
     else:
         log(market, """
-            Не удалось создать ордер: %s
+            Error with creating order: %s
         """ % order_res['message'])
     USE_LOG = False
 
@@ -272,34 +275,34 @@ def create_sell(from_order, market):
     """ % from_order
 
     order_amount = exchange.fetch_order(from_order)['amount']
-    order_spent = exchange.fetch_order(from_order)['price']*order_amount
+    order_spent = exchange.fetch_order(from_order)['price']
 
-    print(order_spent)
-    print(order_amount)
-    new_rate = (order_spent + order_spent * MARKUP) / order_amount
+    new_rate = (order_spent + order_spent * MARKUP)
     new_rate_fee = new_rate + (new_rate * STOCK_FEE) / (1 - STOCK_FEE)
     # Берем цену лучшего бида
     current_rate = float(exchange.fetch_ticker(market)['bid'])
     choosen_rate = current_rate if current_rate > new_rate_fee else new_rate_fee
     log(market, """
-        Итого на этот ордер было потрачено %0.8f %s, получено %0.8f %s
-        Что бы выйти в плюс, необходимо продать купленную валюту по курсу %0.8f
-        Тогда, после вычета комиссии %0.4f останется сумма %0.8f %s
-        Итоговая прибыль составит %0.8f %s
-        Текущий курс продажи %0.8f
-        Создаю ордер на продажу по курсу %0.8f
+        Was spent: %0.8f %s, Was Recieve: %0.8f %s
+        New Price for Murkup %0.8f
+        Fee %0.4f, After fee: %0.8f %s
+        Main markup: %0.8f %s
+        Current rate %0.8f
+        Creating sell's order %0.8f
     """
         % (
             order_spent, pair[1], order_amount, pair[0],
             new_rate_fee,
             STOCK_FEE, (new_rate_fee * order_amount - new_rate_fee * order_amount * STOCK_FEE), pair[1],
-            (new_rate_fee * order_amount - new_rate_fee * order_amount * STOCK_FEE) - order_spent, pair[1],
+            (new_rate_fee * order_amount - new_rate_fee * order_amount * STOCK_FEE) - order_spent, pair[1], #MAIN MARKUP!
             current_rate,
             choosen_rate,
         )
         )
     #time.sleep(100)
     order_res = exchange.create_order(market, 'limit', 'sell', order_amount, choosen_rate)
+    if not('price' in order_res) or not('amount' in order_res):
+        order_res = exchange.fetch_order(order_res['id'])
     # Заполняем БД по созданному ордеру
     if order_res:
         cursor.execute(
@@ -322,14 +325,14 @@ def create_sell(from_order, market):
                 :from_order_id
               )
             """, {
-                'order_id': order_res['info']['clientOrderId'],
+                'order_id': order_res['id'],
                 'order_pair': market,
                 'order_price': choosen_rate,
-                'order_amount': order_amount,
+                'order_amount': order_res['amount'],
                 'from_order_id': from_order
             })
         conn.commit()
-        log(order_res, " - Создан ордер на продажу")
+        log(order_res, " - Sell order created!")
     USE_LOG = False
 
 
@@ -378,14 +381,16 @@ while Working:
             if orders_info:
                 # Проверяем, были ли выполнены ранее созданные ордера, и помечаем в БД.
                 for order in orders_info:
+                    print("!")
+                    pprint(order)
                     if not orders_info[order]['order_filled']:
                         # Запрашиваем данные ордера у биржи
                         order_info = exchange.fetch_order(orders_info[order]['order_id'])
                         # Проверяем пришедший статус
                         if order_info['status'] == 'closed':
-                            if(order_info['fee'] == None):
-                                print("FEEEEE")
-                                order_info['fee'] = STOCK_FEE
+                            if(order_info['fee'] == None) or not('fee' in order_info):
+                                order_info['fee'] = {}
+                                order_info['fee']['cost'] = STOCK_FEE
                             cursor.execute(
                                 """
                                   UPDATE orders
@@ -401,13 +406,16 @@ while Working:
                                     'order_id': order,
                                     'order_price': order_info['price'],
                                     'order_amount': order_info['amount'],
-                                    'fee': float(order_info['fee'])
+                                    'fee': float(order_info['fee']['cost'])
                                 }
                             )
                             conn.commit()
-                            log(orders_info[order], " - Ордер помечен выполненным в БД")
+                            log(orders_info[order], " - Order was closed in DB")
                             orders_info[order]['order_filled'] = datetime.now()
                         elif order_info['status'] == 'canceled':
+                            if (order_info['fee'] == None) or not ('fee' in order_info):
+                                order_info['fee'] = {}
+                                order_info['fee']['cost'] = STOCK_FEE
                             cursor.execute(
                                 """
                                   UPDATE orders
@@ -423,11 +431,11 @@ while Working:
                                     'order_id': order,
                                     'order_price': order_info['price'],
                                     'order_amount': order_info['amount'],
-                                    'fee': (order_info['fee'])
+                                    'fee': float(order_info['fee']['cost'])
                                 }
                             )
                             conn.commit()
-                            log(orders_info[order], " - Ордер помечен отмененным в БД")
+                            log(orders_info[order], " - Order was Canceled in DB")
                             orders_info[order]['order_cancelled'] = datetime.now()
                         else:
                             orders_info[order]['order_cancelled'] = False
@@ -443,12 +451,12 @@ while Working:
                                     chart_data=get_ticks(market))  # проверяем, можно ли создать sell
                                 if macd_advice['trand'] == 'BEAR' or (
                                         macd_advice['trand'] == 'BULL' and macd_advice['growing']):
-                                        print('Для ордера не создаем ордер на продажу, т.к. ситуация на рынке неподходящая')
+                                        print('Not create order')
                                 else:
-                                    log(market, "Для выполненного ордера на покупку выставляем ордер на продажу")
+                                    log(market, "Start to create Sell order")
                                     create_sell(from_order=orders_info[order]['order_id'], market=market)
                             else:  # создаем sell если тенденция рынка позволяет
-                                log(market, "Для выполненного ордера на покупку выставляем ордер на продажу")
+                                log(market, "Start to create Sell order")
                                 create_sell(from_order=orders_info[order]['order_id'], market=market)
                         else:
 
@@ -473,7 +481,7 @@ while Working:
                                             }
                                         )
                                         conn.commit()
-                                        log(orders_info[order], " - Ордер помечен отмененным в БД")
+                                        log(orders_info[order], " - Order was Canceled in DB")
                     else:  # Ордер на продажу
                         pass
             else:

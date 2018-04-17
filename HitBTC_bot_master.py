@@ -21,7 +21,7 @@ USE_MACD = True  # True - оценивать тренд по MACD, False - по�
 
 BEAR_PERC = 70  # % что считаем поворотом при медведе
 
-BULL_PERC = 99.9  # % что считаем поворотом при быке
+BULL_PERC = 99  # % что считаем поворотом при быке
 
 # BEAR_PERC = 70  # % что считаем поворотом при медведе
 
@@ -162,7 +162,7 @@ def get_ticks(market):
         except ValueError:
             dt_obj = datetime.strptime(trade['datetime'], '%Y-%m-%dT%H:%M:%SZ')
 
-        ts = int((time.mktime(dt_obj.timetuple()) / 300)) * 300
+        ts = int((time.mktime(dt_obj.timetuple()) / 300)) * 300 + 10800
         if not ts in chart_data:
             chart_data[ts] = {'open': 0, 'close': 0, 'high': 0, 'low': 0}
 
@@ -266,7 +266,7 @@ def create_buy(market):
     USE_LOG = False
 
 # Ордер на продажу
-def create_sell(from_order, market):
+def create_sell(from_order, market, trand):
     global USE_LOG
     USE_LOG = True
     pair = market.split('/')
@@ -281,7 +281,11 @@ def create_sell(from_order, market):
     new_rate_fee = new_rate + (new_rate * STOCK_FEE) / (1 - STOCK_FEE)
     # Берем цену лучшего бида
     current_rate = float(exchange.fetch_ticker(market)['bid'])
-    choosen_rate = current_rate if current_rate > new_rate_fee else new_rate_fee
+    if(trand == 'BEAR'):
+        choosen_rate = current_rate
+    else:
+        choosen_rate = current_rate if current_rate > new_rate_fee else new_rate_fee
+
     log(market, """
         Was spent: %0.8f %s, Was Recieve: %0.8f %s
         New Price for Murkup %0.8f
@@ -332,9 +336,18 @@ def create_sell(from_order, market):
                 'from_order_id': from_order
             })
         conn.commit()
+        log(trand, " - Reason for order.")
         log(order_res, " - Sell order created!")
     USE_LOG = False
 
+def profit(from_order, market):
+    old_rate = exchange.fetch_order(from_order)['price']
+    current_rate = float(exchange.fetch_ticker(market)['bid'])
+
+    if(old_rate*(1+MARKUP) < current_rate):
+        return True
+    else:
+        return False
 
 # Инициализируем биржу
 
@@ -449,12 +462,12 @@ while Working:
                             if USE_MACD:
                                 macd_advice = get_macd_advice(
                                     chart_data=get_ticks(market))  # проверяем, можно ли создать sell
-                                if macd_advice['trand'] == 'BEAR' or (
+                                if (macd_advice['trand'] == 'BEAR' and not profit(from_order=orders_info[order]['order_id'], market=market)) or (
                                         macd_advice['trand'] == 'BULL' and macd_advice['growing']):
                                         print('Not create order')
                                 else:
                                     log(market, "Start to create Sell order")
-                                    create_sell(from_order=orders_info[order]['order_id'], market=market)
+                                    create_sell(from_order=orders_info[order]['order_id'], market=market, trand=macd_advice['trand'])
                             else:  # создаем sell если тенденция рынка позволяет
                                 log(market, "Start to create Sell order")
                                 create_sell(from_order=orders_info[order]['order_id'], market=market)

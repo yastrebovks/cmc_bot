@@ -744,7 +744,7 @@ while Working:
                                 cancel_res = exchange.cancel_order(order, symbol=market)
                                 create_sell_executive(from_order=orders_info[order], market=market, trand="Executive")
             else:
-                if(!StopFlag):
+                if(not StopFlag):
                     # ��������� MACD, ���� ����� � ������ ���������, ���������� ����� �� �������
                     if USE_MACD:
                         chart = get_ticks(market)

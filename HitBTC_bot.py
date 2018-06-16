@@ -1,13 +1,13 @@
 import time
 from pprint import pprint
-#import sys
-#sys.path.append("/home/null/Body")
+import sys
+sys.path.append("/home/null/Body")
 from Additionals import profit, init_exchange, log
-from Trades import create_sell_executive, create_buy, create_sell, create_zero, close_positions
-from Advicer import get_macd_advice
+from Trades import create_sell_executive, create_buy, create_sell, create_zero, close_positions, stop_orders
+from Advicer_extended import get_advice
 from datetime import datetime
 
-def Runing():
+def Runing(main_properties):
     print("!")
     conn = main_properties["conn"]
     cursor = main_properties["cursor"]
@@ -42,14 +42,17 @@ def Runing():
                                 AND o.order_cancelled IS NULL
                        """ % market
                 orders_info = {}
-                for row in cursor.execute(orders_q):
-                    orders_info[str(row[0])] = {'order_id': row[0], 'order_type': row[1], 'order_price': row[2],
+                try:
+                    for row in cursor.execute(orders_q):
+                        orders_info[str(row[0])] = {'order_id': row[0], 'order_type': row[1], 'order_price': row[2],
                                                 'order_amount': row[3], 'order_filled': row[4], 'order_created': row[5],
                                                 'partially_filled': False, 'order_cancelled': False
                                                 }
+                except:
+                    print("DB is empty")
                 if orders_info:
                     for order in orders_info:
-                        if not orders_info[order]['order_filled'] and orders_info[order]["order_id"] != "Zero":
+                        if not orders_info[order]['order_filled'] and (orders_info[order]["order_id"]).find("Zero") == -1:
                             print("Hello there!")
                             order_info = main_properties["exchange"].fetch_order(orders_info[order]['order_id'],
                                                                                  symbol=market)
@@ -105,6 +108,11 @@ def Runing():
                                     conn.commit()
                                     log(orders_info[order], " - Order was closed in DB")
                                     orders_info[order]['order_filled'] = datetime.now()
+                                elif(main_properties['CloseOrders']):
+                                    try:
+                                        main_properties['exchange'].close_order(orders_info[order]['order_id'])
+                                    except:
+                                        print("Can't Cancel order for ", market)
                                 else:
                                     if (order_info['fee'] == None) or not ('fee' in order_info):
                                         order_info['fee'] = {}
@@ -138,29 +146,24 @@ def Runing():
                         if orders_info[order]['order_type'] == 'buy':
                             if orders_info[order]['order_filled']:
                                 if main_properties["USE_MACD"]:
-                                    macd_advice = get_macd_advice(main_properties, market, '30m')
-                                    if (macd_advice['trand'] == 'BEAR' and not profit(main_properties,
-                                            from_order=orders_info[order], market=market)) or \
-                                            (macd_advice['trand'] == 'BULL' and macd_advice['growing']):
-                                        print('Not create order')
-                                    else:
-                                        # log_macd(talib.MACD(numpy.asarray([chart[item]['close'] for item in sorted(chart)]),
-                                        #                   fastperiod=12, slowperiod=26, signalperiod=9))
-                                        log(market, "Start to create Sell order")
-                                        log("MAXV: ", macd_advice['maxv'])
-                                        if (market == "BCH/ETH" and abs(macd_advice['maxv']) >= 0.006) or \
-                                                (abs(macd_advice['maxv']) >= 0.0006 and market == "XMR/ETH") or \
-                                                (market != "BCH/ETH" and market != "XMR/ETH"):
-                                            create_sell(main_properties, from_order=orders_info[order], market=market,
-                                                        trand=macd_advice['trand'])
-                                else:  # ??????? sell ???? ????????? ????? ?????????
+                                    advice = get_advice(main_properties, market, '5m', 'sell', orders_info[order]['order_amount'])
+                                    if (advice == 'SELL'):
+                                        create_sell(main_properties, from_order=orders_info[order], market=market,
+                                                trand = advice)
+                                    elif(profit(main_properties, from_order=orders_info[order], market=market) <= -0.02):
+                                        create_sell_executive(main_properties, from_order=orders_info[order],
+                                            market=market,
+                                            trand="Executive")
+                                    elif(profit(main_properties, from_order=orders_info[order], market=market) >= 0.035) and \
+                                            not (advice == 'POH'):
+                                        create_sell(main_properties, from_order=orders_info[order], market=market,
+                                                    trand = advice)
+                                else:
                                     log(market, "Start to create Sell order")
-                                    log("MAXV: ", macd_advice['maxv'])
                                     create_sell(main_properties, from_order=orders_info[order], market=market)
                             else:
 
-                                print(
-                                    "NOT FILLED")  # ???? buy ?? ??? ????????, ? ?????? ?????????? ??????? ??? ?????? ??????, ????????
+                                print("NOT FILLED")
                                 # not orders_info[order]['partially_filled'] and
                                 time_passed = int((datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()) - int(
                                     time.mktime(datetime.strptime(orders_info[order]['order_created'],
@@ -186,7 +189,7 @@ def Runing():
                                 if orders_info[order]['partially_filled'] and not orders_info[order]['order_cancelled']:
                                     if time_passed > 10:
                                         cancel_res = main_properties["exchange"].cancel_order(order, symbol=market)
-                        else:  # ????? ?? ???????
+                        else:
                             print("!")
                             if not orders_info[order]['partially_filled'] and not orders_info[order]['order_cancelled']:
                                 time_passed = int((datetime.utcnow() - datetime(1970, 1, 1)).total_seconds()) - int(
@@ -199,34 +202,46 @@ def Runing():
                 else:
                     if(not main_properties["StopFlag"]):
                         if main_properties["USE_MACD"]:
-                            macd_advice = get_macd_advice(main_properties, market, '5m')
-                            if macd_advice['trand'] == 'BEAR' and macd_advice['growing']:
-                                log("MAXV: ", macd_advice['maxv'])
-                                if (market == "BCH/ETH" and abs(macd_advice['maxv']) >= 0.006) or \
-                                        (abs(macd_advice['maxv']) >= 0.0006 and market == "XMR/ETH") or \
-                                        (market != "BCH/ETH" and market != "XMR/ETH"):
+                            advice = get_advice(main_properties, market, '5m', 'buy')
+                            if advice == 'BUY':
+                                #log(market,"MAXV: ", macd_advice['maxv'])
+                                if (market not in main_properties['maxv']) or \
+                                        (abs(main_properties['curr_maxv']) >= main_properties['maxv'][market]):
                                     create_buy(main_properties, market=market)
                         else:
                             create_buy(main_properties, market=market)
                     else:
-                        del(main_properties["MARKETS"])[market]
+                        main_properties["MARKETS"].remove(market)
             time.sleep(5)
-            if(main_properties["MARKETS"] == {}):
+            if(not main_properties["MARKETS"]):
                 Working = False
         except Exception as e:
             print("Exit bot")
             print(e)
-    return
 
-main_properties = init_exchange()
-conn = main_properties["conn"]
-cursor = main_properties["cursor"]
+    log("The bot's work is end.")
+    return 0
 
-if(main_properties["ClosePositions"]):
-    close_positions(main_properties)
-    Runing()
-elif(main_properties["ZeroFlag"]):
-    create_zero(main_properties)
-    Runing()
-else:
-    Runing()
+def start_robot():
+    main_properties = init_exchange()
+
+    if(main_properties["ClosePositions"]):
+        conn = main_properties["conn"]
+        cursor = main_properties["cursor"]
+        cursor.execute("DROP TABLE orders")
+        close_positions(main_properties)
+        Runing(main_properties)
+    elif(main_properties["ZeroFlag"]):
+        create_zero(main_properties)
+        conn = main_properties["conn"]
+        cursor = main_properties["cursor"]
+        Runing(main_properties)
+    elif(main_properties["StopOrders"]):
+        main_properties["StopFlag"] = True
+        stop_orders(main_properties)
+    else:
+        conn = main_properties["conn"]
+        cursor = main_properties["cursor"]
+        Runing(main_properties)
+
+start_robot()

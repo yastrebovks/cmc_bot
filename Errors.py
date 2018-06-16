@@ -2,8 +2,14 @@ from time import time
 
 ## Обработка NoID
 def err_noid(main_properties, current_rate, market):
+    old_order = {}
     if(main_properties['MarketPlace'] == 'bittrex'):
-        old_order = main_properties["exchange"].fetch_orders(symbol = market, since = (time() - 300), limit = 1)
+        while(not old_order):
+            try:
+                old_order = main_properties["exchange"].fetch_orders(symbol = market, since = (time() - 300), limit = 1)
+            except:
+                pass
+
         length = len(old_order)
         if(length == 0):
             return 0

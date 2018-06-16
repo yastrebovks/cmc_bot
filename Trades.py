@@ -1,9 +1,9 @@
 from Additionals import log, get_positive_accounts
 from Errors import err_noid
-from time import time
+import time
+from datetime import datetime
 
-
-# Покупка
+# Buy order
 def create_buy(main_properties, market):
     global USE_LOG
     USE_LOG = True
@@ -35,7 +35,7 @@ def create_buy(main_properties, market):
     current_rate = order_book[max(i - 1, 0)][0]
     # current_rate = float(exchange.fetch_order_book(market, 100)['asks'][1][0])
     # CAN_SPEND = balance_refresh()
-    can_buy = real_spend / current_rate
+    can_buy = int(1000 * ((1-main_properties['STOCK_FEE'])*(real_spend / current_rate))) / 1000
 
     log(market, """
         Current Rate - %0.8f
@@ -48,6 +48,7 @@ def create_buy(main_properties, market):
     try:
         order_res = exchange.create_order(market, 'limit', 'buy', can_buy, current_rate)
     except:
+        print(exchange.create_order(market, 'limit', 'buy', can_buy, current_rate))
         log("Error with Buy Creation")
         log(order_res)
     iter = 5
@@ -112,17 +113,18 @@ def create_buy(main_properties, market):
     USE_LOG = False
 
 
-# Продажа
+# Sell order
 def create_sell(main_properties, from_order, market, trand=""):
     global USE_LOG
     USE_LOG = True
+    print(from_order)
     exchange = main_properties["exchange"]
     pair = market.split('/')
     buy_order_q = """
         SELECT order_spent, order_amount FROM orders WHERE order_id='%s'
     """ % from_order
 
-    if (from_order['order_id'] != "NoID" and from_order['order_id'] != "Zero"):
+    if (from_order['order_id'] != "NoID" and (from_order['order_id']).find("Zero") == -1):
         try:
             from_order = from_order['order_id']
             order_amount = exchange.fetch_order(from_order, symbol=market)['amount']
@@ -134,6 +136,7 @@ def create_sell(main_properties, from_order, market, trand=""):
     else:
         order_amount = from_order['order_amount']
         order_spent = from_order['order_price']
+        from_order = from_order['order_id']
         try:
             current_balance = get_positive_accounts(exchange.fetch_balance()[pair[0]])['free']
         except:
@@ -141,8 +144,6 @@ def create_sell(main_properties, from_order, market, trand=""):
 
     if order_amount > current_balance:
         order_amount = current_balance
-
-
 
     new_rate = (order_spent + order_spent * main_properties["MARKUP"])
     new_rate_fee = new_rate + (new_rate * main_properties["STOCK_FEE"]) / (1 - main_properties["STOCK_FEE"])
@@ -157,10 +158,10 @@ def create_sell(main_properties, from_order, market, trand=""):
 
     current_rate = order_book[max(i - 1, 0)][0]
 
-    if (trand == 'BEAR'):
+    if(current_rate >= new_rate_fee):
         choosen_rate = current_rate
     else:
-        choosen_rate = current_rate if current_rate > new_rate_fee else new_rate_fee
+        return
 
     log(market, """
         Was spent: %0.8f %s, Was Recieve: %0.8f %s
@@ -185,7 +186,6 @@ def create_sell(main_properties, from_order, market, trand=""):
     if not ('price' in order_res) or not ('amount' in order_res):
         order_res = exchange.fetch_order(order_res['id'], symbol=market)
 
-    print(from_order)
     if order_res:
         main_properties["cursor"].execute(
             """
@@ -209,16 +209,17 @@ def create_sell(main_properties, from_order, market, trand=""):
             """, {
                 'order_id': order_res['id'],
                 'order_pair': market,
-                'order_price': choosen_rate,
-                'order_amount': order_res['amount'],
-                'from_order_id': from_order['order_id']
-            })
+                'order_price': float(choosen_rate),
+                'order_amount': float(order_res['amount']),
+                'from_order_id': from_order
+        })
+        print("1")
         main_properties["conn"].commit()
         log(trand, " - Reason for order.")
         log(order_res, " - Sell order created!")
     USE_LOG = False
 
-# Принудительная продажа
+# Executive Sell order
 def create_sell_executive(main_properties, from_order, market, trand=""):
     global USE_LOG
     USE_LOG = True
@@ -229,7 +230,7 @@ def create_sell_executive(main_properties, from_order, market, trand=""):
         SELECT order_spent, order_amount FROM orders WHERE order_id='%s'
     """ % from_order
 
-    if (from_order['order_id'] != "NoID" and from_order['order_id'] != "Zero"):
+    if (from_order['order_id'] != "NoID" and (from_order['order_id']).find("Zero") == -1):
         try:
             from_order = from_order['order_id']
             order_amount = exchange.fetch_order(from_order, symbol=market)['amount']
@@ -241,6 +242,7 @@ def create_sell_executive(main_properties, from_order, market, trand=""):
     else:
         order_amount = from_order['order_amount']
         order_spent = from_order['order_price']
+        from_order = from_order['order_id']
         try:
             current_balance = get_positive_accounts(exchange.fetch_balance()[pair[0]])['free']
         except:
@@ -251,7 +253,7 @@ def create_sell_executive(main_properties, from_order, market, trand=""):
 
     new_rate = (order_spent + order_spent * main_properties["MARKUP"])
     new_rate_fee = new_rate + (new_rate * main_properties["STOCK_FEE"]) / (1 - main_properties["STOCK_FEE"])
-    # ????? ???? ??????? ????
+
     order_book = exchange.fetch_order_book(market, 100)['bids']
 
     i = 0
@@ -281,12 +283,11 @@ def create_sell_executive(main_properties, from_order, market, trand=""):
             current_rate,
             choosen_rate,
         )
-        )
-    # choosen_rate *= 10
+    )
     order_res = exchange.create_order(market, 'limit', 'sell', order_amount, choosen_rate)
     if not ('price' in order_res) or not ('amount' in order_res):
         order_res = exchange.fetch_order(order_res['id'], symbol=market)
-    # ????????? ?? ?? ?????????? ??????
+
     if order_res:
         main_properties["cursor"].execute(
             """
@@ -312,15 +313,17 @@ def create_sell_executive(main_properties, from_order, market, trand=""):
                 'order_pair': market,
                 'order_price': choosen_rate,
                 'order_amount': order_res['amount'],
-                'from_order_id': from_order['order_id']
+                'from_order_id': from_order
             })
         main_properties["conn"].commit()
         log(trand, " - Reason for order.")
         log(order_res, " - Sell order created!")
     USE_LOG = False
 
-# Нулевой ордер
+# Zero order
 def create_zero(main_properties):
+    index = 0
+
     main_properties["cursor"].execute(
         """
             INSERT INTO orders(
@@ -343,22 +346,25 @@ def create_zero(main_properties):
               datetime()
             )
         """, {
-            'order_id': "Zero",
+            'order_id': "Zero"+str(index),
             'order_pair': main_properties["MARKETS"][0],
             'order_price': 0,
             'order_amount': main_properties["ZeroCount"],
             'order_spent': 0
         })
 
+    index += 1
     main_properties["conn"].commit()
     log("Zero Order Created!")
 
+# Close all positions
 def close_positions(main_properties):
+    index = 0
     for market in main_properties["MARKETS"]:
         pair = market.split('/')
         balance = 0
         try:
-            balance = get_positive_accounts(main_properties["exchange"].fetch_balance()[pair[0]])['free']
+            balance = round(get_positive_accounts(main_properties["exchange"].fetch_balance()[pair[0]])['free'], 3)
         except:
             pass
 
@@ -385,14 +391,26 @@ def close_positions(main_properties):
                       datetime()
                     )
                 """, {
-                    'order_id': "Zero",
+                    'order_id': "CZero"+str(index),
                     'order_pair': market,
                     'order_price': 0,
                     'order_amount': balance,
                     'order_spent': 0
                 })
 
+            index += 1
             main_properties["conn"].commit()
             log("Zero Order Created!")
 
     main_properties["StopFlag"] = True
+
+def handy_sel():
+    return
+
+def handy_buy():
+    return
+
+def stop_orders(main_properties):
+
+
+    return

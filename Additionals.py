@@ -8,12 +8,20 @@ import time
 
 PROFIT = 0
 REFRESH = False
-USE_LOG = False
+USE_LOG = True
 
 USE_MACD = True
-BEAR_PERC = 72
+BEAR_PERC = 68
 
 BULL_PERC = 99.8
+
+maxv = {
+    "BCH/ETH": 0.006,
+    "XMR/ETH": 0.0006,
+    "ETH/BTC": 0.00004,
+    "ETC/ETH": 0.00007,
+    "DASH/ETH": 0.0007
+}
 
 def init_exchange():
     #Create DB
@@ -40,39 +48,30 @@ def init_exchange():
     #Get Config-file
     with open('keys.txt', 'r', encoding='utf-8') as fl:
         keys = json.load(fl)
-    #Get Marketplace
-    if not 'marketplace' in keys:
-        try:
-            exchange = ccxt.hitbtc2({
-                "apiKey": keys['apiKey'],
-                "secret": keys['secretKey'],
-                # "enableRateLimit": True,
-                # "verbose": True,
-                # "password": password,
-            })
 
-        except Exception as e:
-            print("Connection Error 1")
-    else:
-        try:
-            exchange = eval('ccxt.%s({\'apiKey\':\"%s\",\'secret\':\"%s\"})' % (
-            keys['marketplace'], keys['apiKey'], keys['secretKey']))
-        except Exception as e:
-            print("Connection Error 2")
     try:
+        exchange = eval('ccxt.%s({\'apiKey\':\"%s\",\'secret\':\"%s\"})' % (
+            keys['marketplace'], keys['apiKey'], keys['secretKey']))
+
         MARKETS = keys['markets']
         ZeroFlag = 0
         ZeroCount = 0
-        balance = float(get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free'])
+        balance = 0
+        try:
+            balance = float(get_positive_accounts(exchange.fetch_balance()[keys['currency']])['free'])
+        except:
+            pass
+
         CAN_SPEND = keys['tradeCount']
-        '''
-        if(CAN_SPEND > balance):
+
+        if((0.97 * CAN_SPEND) > balance and len(MARKETS) == 1
+                and not (cursor.execute("SELECT * FROM orders").fetchone())):
             if(check_balances(MARKETS, CAN_SPEND, exchange)):
                 ZeroFlag = 1
                 ZeroCount = (CAN_SPEND - balance)/exchange.fetch_order_book(MARKETS[0], 1)['asks'][0][0]
             else:
                 raise Exception
-        '''
+
         REFRESH = False
 
         print(MARKETS)
@@ -83,6 +82,10 @@ def init_exchange():
         StopFlag = False
         if 'StopFlag' in keys:
             StopFlag = keys['StopFlag']
+
+        StopOrders = False
+        if 'StopOrders' in keys:
+            StopOrders = keys['StopOrders']
 
         ClosePositions = False
         if 'ClosePositions' in keys:
@@ -105,7 +108,7 @@ def init_exchange():
         "ORDER_LIFE_TIME": ORDER_LIFE_TIME,
         "keys": keys,
         "REFRESH": REFRESH,
-        "USE_MACD": USE_MACD,
+        "USE_MACD": True,
         "BEAR_PERC": BEAR_PERC,
         "BULL_PERC": BULL_PERC,
         "conn": conn,
@@ -114,7 +117,10 @@ def init_exchange():
         "ZeroCount": ZeroCount,
         "MarketPlace": keys['marketplace'],
         "StopFlag": StopFlag,
-        "ClosePositions": ClosePositions
+        "ClosePositions": ClosePositions,
+        "maxv": maxv,
+        "StopOrders": StopOrders,
+        "LastPSAR": "null"
     }
     return main_properties
 
@@ -195,9 +201,19 @@ def get_ticks(main_properties, market, timeframe = '5m'):
     return chart_data
 
 def profit(main_properties, from_order, market):
+    if(not from_order['order_price']):
+        return 1
+    order_book = main_properties['exchange'].fetch_order_book(market, 100)['bids']
     old_rate = from_order['order_price'] * (1 + main_properties["MARKUP"])
-    current_rate = float(main_properties["exchange"].fetch_ticker(market)['bid'])
-    return (old_rate < current_rate)
+    i = 0
+    val = 0
+    alpha = 0.2
+    while (val < from_order['order_amount'] * (1 + alpha)):
+        val += order_book[i][1]
+        i += 1
+    current_rate = order_book[max(i - 1, 0)][0]
+
+    return ((current_rate / old_rate) - 1)
 
 def check_balances(markets, can_spend, exchange):
     if(len(markets)== 1):
@@ -208,4 +224,4 @@ def check_balances(markets, can_spend, exchange):
         else:
             print("Not enogh money!")
             return 0
-
+    return 1
